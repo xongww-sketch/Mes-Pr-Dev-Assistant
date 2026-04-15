@@ -1,0 +1,275 @@
+---
+name: mes-domain-knowledge
+version: 1.0
+description: >
+  MES（制造执行系统）领域知识。覆盖MES定位、系统边界、核心业务流程、
+  ISA-95架构、7大模块、新旧MES差异、长期规划。是所有MES相关Skill的知识根基。
+category: knowledge
+tags: [mes, manufacturing, isa-95, domain-knowledge, coros]
+depends_on: []
+---
+
+# MES 领域知识
+
+> 维护人：MES产品经理 | 最近更新：2026-04-14
+> 来源：MES知识库6篇核心文档 + 群聊蒸馏 + 322个n8n workflow分析
+
+---
+
+## 1. MES 产品定位
+
+### 1.1 核心定义
+MES是**生产执行层唯一事实系统**，负责从工单下达到产品完工的全流程数据采集、过程管控和质量追溯。
+
+### 1.2 系统边界（什么做，什么不做）
+
+| 做 ✅ | 不做 ❌ |
+|-------|---------|
+| 工单接收与分解 | 生产计划制定（APS/ERP负责） |
+| 工序管理与过站控制 | 库存账务管理（WMS负责） |
+| SN生成/绑定/解绑 | 订单管理（OMS负责） |
+| 物料绑定与追溯 | 财务核算（SAP负责） |
+| 质量数据采集（FQC/OQC） | 采购管理（SRM负责） |
+| 设备状态监控 | 人力资源管理（HR系统） |
+| 报工与产量统计 |  |
+| 全流程追溯 |  |
+
+### 1.3 与周边系统的关系
+
+```
+┌─────────┐    工单     ┌─────┐    SN/产量    ┌─────┐
+│  ERP    │ ──────────→ │ MES │ ────────────→ │ SAP │
+│ (SAP)   │ ←────────── │     │ ←──────────── │     │
+└─────────┘   报工/消耗  └──┬──┘   财务/成本   └─────┘
+                            │
+              ┌─────────────┼─────────────┐
+              ↓             ↓             ↓
+         ┌────────┐   ┌────────┐   ┌────────┐
+         │  WMS   │   │  OMS   │   │  SRM   │
+         │ (仓储)  │   │ (订单)  │   │ (采购)  │
+         └────────┘   └────────┘   └────────┘
+              ↑             ↑             ↑
+              └─────────────┼─────────────┘
+                            ↓
+                    ┌──────────────┐
+                    │  COROS后台   │
+                    │ (设备/激活)   │
+                    └──────────────┘
+```
+
+---
+
+## 2. MES 核心业务流程
+
+### 2.1 主流程（工单是绝对主线）
+
+```
+需求 → 工单 → 准备 → 执行(过站/报工) → 质检 → 完工 → 数据沉淀
+```
+
+### 2.2 流程详解
+
+#### 2.2.1 工单管理
+- **来源**：SAP定时同步（n8n定时任务）+ 手动创建
+- **关键字段**：工单号、机型、数量、工艺路线、计划时间
+- **状态流转**：创建 → 已下发 → 执行中 → 已完工 → 已关闭
+- **关闭需审批**：工单关闭必须经过审批流程
+
+#### 2.2.2 生产准备
+- **工艺路线配置**：工序/工艺/SOP的创建与维护
+- **物料准备**：物料绑定、辅料台账
+- **设备准备**：资源注册/登录/状态监控
+- **打印准备**：打印模板、条码信息
+
+#### 2.2.3 生产执行（过站）
+- **SN生成**：包装环节生成SN，绑定69码
+- **过站控制**：每道工序扫码过站，前置工序校验
+- **数据采集**：上位机数据、重量、温湿度、视觉检测
+- **物料绑定**：SN与中框/FPC/电池/屏等部件绑定
+- **防错卡控**：工单一致性校验、批次校验
+
+#### 2.2.4 质量管理
+- **FQC**（最终质量控制）：成品检验
+- **OQC**（出货质量控制）：出货前检验
+- **外观检**：组装整机外观检查（已增加MES卡控）
+- **气密性测试**：半成品气密性测试
+- **不良品管理**：不良品上传、详情记录、返修流程
+
+#### 2.2.5 包装与出库
+- **包装**：创建包装、箱信息、扫码出库
+- **SN上传**：同步到国库、京东、管易、抖音国补等平台
+- **发货**：发货月报、仓库扫码出库
+
+#### 2.2.6 维修与返修
+- **维修数据**：维修消息、维修工单
+- **返投流程**：售后机返投产线重新测试
+- **解绑/重绑**：维修时的部件解绑与重新绑定
+
+---
+
+## 3. ISA-95 架构映射
+
+| ISA-95层级 | COROS实现 | 说明 |
+|-----------|-----------|------|
+| L4 业务计划 | SAP ERP | 生产计划、财务 |
+| L3 制造运营 | **新MES (NestJS)** | 工单/过站/质量/追溯 |
+| L2 监控 | 上位机/SCADA | 设备数据采集 |
+| L1 控制 | PLC/传感器 | 产线设备控制 |
+| L0 过程 | 产线设备 | 物理生产过程 |
+
+### 3.1 MES 7大模块
+
+| 模块 | 功能 | 关键n8n workflow |
+|------|------|-----------------|
+| **计划管理** | 工单接收/分解/排程 | 定时任务-从sap中获取工单信息 |
+| **排程管理** | 工序排程/资源分配 | createprocess_API, getprocess_API |
+| **物料管理** | 物料绑定/追溯/辅料 | get_matialCode_by_sn, binding_materials |
+| **执行管理** | 过站/报工/数据采集 | upload_machine_data, Hostcomputer_data_report |
+| **质量管理** | FQC/OQC/不良品 | insert_FQC_msg, insert_OQC_msg, repair_message |
+| **设备管理** | 资源状态/监控 | resourceOnlineStatus, ResouceLogin |
+| **追溯管理** | 全流程追溯/报表 | get_jobmessage, select_all_by_sn |
+
+---
+
+## 4. 系统实现现状
+
+### 4.1 技术栈
+- **新MES**：NestJS（唯一主系统）
+- **n8n**：辅助工具（接口编排/数据同步/通知）
+- **旧MES**：已退役（部分workflow仍标注"旧MES"）
+- **数据库**：PostgreSQL（主）+ SQL Server（旧系统遗留）+ MongoDB（文档）
+- **缓存**：Redis（分布式锁/Token缓存）
+
+### 4.2 n8n在MES中的定位
+- **是**：非核心业务流程的自动化与编排工具
+- **不是**：MES主业务系统、生产事实的最终来源、复杂业务规则的承载者
+- **合理使用**：接口编排、数据同步、通知提醒
+- **严禁使用**：工单创建/状态流转、过站/报工、质量判定
+
+### 4.3 部署架构
+- **n8n-v2**：10.128.11服务器，Docker Compose
+- **组件**：main + worker(s) + Redis + PostgreSQL
+- **版本**：n8n 1.113.2, Node.js 22.19.0
+- **时区**：Asia/Shanghai
+
+---
+
+## 5. 关键业务概念
+
+### 5.1 SN（序列号）
+- **生成时机**：包装环节
+- **绑定内容**：69码（条形码）、中框ID、FPC、电池、屏幕等
+- **生命周期**：生成 → 绑定 → 过站 → 包装 → 出库 → 激活
+- **虚拟SN**：用于测试/返修场景
+
+### 5.2 工单（Work Order）
+- **绝对主线**：所有生产活动围绕工单展开
+- **来源**：SAP同步（主要）+ 手动创建
+- **关键校验**：工单一致性、物料批次、工序顺序
+
+### 5.3 工序/工艺
+- **工序**：最小生产单元（如"PPG点胶"、"气密性测试"）
+- **工艺**：工序的有序集合（工艺路线）
+- **防呆**：前置工序校验、工单一致性校验
+
+### 5.4 渠道
+- **国内渠道**：京东自营、抖音国补等
+- **海外渠道**：Shopify US/EU/UK/CA/JP
+- **同步**：OMS → MES 渠道同步（n8n定时任务）
+
+---
+
+## 6. 长期规划（5大优先级）
+
+| 优先级 | 项目 | 说明 |
+|--------|------|------|
+| P1 | 数据库分层 | 存量/增量数据分库，新旧数据区分 |
+| P2 | NFC人员绑定 | 产线人员NFC绑定，替代手动登录 |
+| P3 | WMS库存对接 | MES与WMS库存数据实时对接 |
+| P4 | 防错体系 | 完善工序防呆、物料校验、工单一致性 |
+| P5 | 设备整合 | 产线设备数据采集整合 |
+| P6 | AI应用 | 智能质检、预测性维护 |
+
+---
+
+## 7. 常见业务场景速查
+
+### 7.1 新品导入
+1. 创建产品/产品型号 → `createproduct_API` / `createproductmodel_API`
+2. 创建工艺路线 → `createprocess_API` / `createprocedure_API`
+3. 配置物料绑定 → `binding_materials_before_processing`
+4. 配置打印模板 → `update_print_template`
+5. 小批量试产 → 验证全流程
+
+### 7.2 产线异常处理
+1. 定位问题工序 → 查`get_jobmessage` / `select_all_by_sn`
+2. 检查n8n workflow状态 → 查对应workflow是否活跃
+3. 判断影响范围 → 查涉及工单/SN
+4. 处理/升级 → 按决策框架判断
+
+### 7.3 数据修复
+1. 确认问题数据 → 查询PostgreSQL
+2. 评估影响 → 是否影响主流程
+3. 执行修复 → n8n手动触发或直接SQL
+4. 验证结果 → 确认修复成功
+
+---
+
+## 8. 关键数据表（PostgreSQL）
+
+| 表名 | 用途 | 关键字段 |
+|------|------|---------|
+| `work_order` | 工单表 | work_order_id, model, quantity, status |
+| `sn_info` | SN信息表 | sn, uuid, status, work_order_id |
+| `binding_record` | 绑定记录表 | sn, component_type, component_id |
+| `station_record` | 过站记录表 | sn, station_id, result, timestamp |
+| `quality_record` | 质量记录表 | sn, type(FQC/OQC), result, defect_code |
+| `package_info` | 包装信息表 | package_id, box_id, sn_list |
+| `material_code` | 物料码表 | material_code, sap_code, description |
+
+---
+
+---
+
+## 8. MES Server 代码架构（NestJS实现）
+
+> 来源：coros-mes-prod 代码通读分析 | 2026-04-15
+
+### 8.1 技术栈
+- 后端: NestJS + Prisma + PostgreSQL + Redis + BullMQ
+- 前端: Vue3 + Vite (若依RuoYi-Vue3)
+- 集成: 飞书SDK + MQTT + n8n + FTP + SSH
+
+### 8.2 核心数据模型
+| 模型 | 作用 | 关键字段 |
+|------|------|----------|
+| Retroid | SN设备标识(核心实体) | retroidId, retroid, joborderId, status |
+| MachineData | 机器生产数据 | retroidId, procedureDetailId, data(JSON) |
+| ProcedureDetail | 工序定义 | procedureName, currentVersion, checkrule |
+| HistoryProcedureDetail | 工序版本历史 | SOP, standardLabor, cycleTime |
+| ProductInfo | 产品信息 | productCode, productModelId, productColor, productType |
+| Joborder | 工单 | joborderNumber, joborderType, productId, status |
+| ProcessConfig | 工艺配置 | processName, processId, config(JSON[]) |
+| DataLog | 审计日志 | operator, action, modelName, oldData, newData |
+
+### 8.3 认证架构
+JWT(30min) + Redis缓存 + 飞书OAuth(email匹配) + RBAC(User→Role→Menu→Permission)
+
+### 8.4 自动审计
+Prisma Extension拦截所有写操作→DataLog表，跳过DataLog/Resources/ProductionPlan/ticketLog/SysLogininfor
+
+### 8.5 n8n集成现状
+- 约15个接口仍通过n8n HTTP调用
+- 渐进迁移中：updateProduct/deleteProduct/上位机查询等已迁移Prisma
+- 环境感知：非prod自动加_test后缀
+
+### 8.6 关键设计模式
+1. **解绑记录模式**: 删除≠物理删除，插入procedureDetailId=91的特殊记录，data中备份原始数据
+2. **内存分页**: 多数n8n接口返回全量数据后内存切片（性能隐患）
+3. **JSON data字段**: MachineData.data存储各工序异构数据
+4. **逻辑删除**: status=2 或 isDeleted=1
+
+---
+
+*本文档是MES领域知识的浓缩版，详细文档见MES知识库。*
+*所有MES相关Skill都应引用本文档作为知识根基。*
